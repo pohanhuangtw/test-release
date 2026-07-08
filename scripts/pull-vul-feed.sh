@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${REPO:-ghcr.io/pohanhuang/vul}"
+REPO="${REPO:-ghcr.io/neuvector/vul}"
 TAG="${TAG:-latest}"
 OUTPUT_DIR="${OUTPUT_DIR:-vul-source}"
 REF_DIR="${REF_DIR:-.github/vul-refs}"

@@ -39,7 +39,7 @@ jobs:
           set -e
           echo "build database version=${{ github.event.inputs.version }}"
 
-          OUTPUT_DIR=vul-dbgen/vul-source ./scripts/pull-vul-feed.sh
+          REPO=ghcr.io/${{ github.repository_owner }}/vul OUTPUT_DIR=vul-dbgen/vul-source ./scripts/pull-vul-feed.sh
 
           echo -e "\n*** make database ***\n"
           VULN_VER=${{ github.event.inputs.version }} NVD_KEY=${{ secrets.DBGEN_NVD_KEY }} make -C vul-dbgen/ db || { echo "Failed make db"; exit 1; }
