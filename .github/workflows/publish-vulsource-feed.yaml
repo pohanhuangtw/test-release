@@ -1,0 +1,120 @@
+name: Publish vulsource feed
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        script:
+          - scripts/vulsource/amazon.sh
+          - scripts/vulsource/app-manual.sh
+          - scripts/vulsource/golang.sh
+          - scripts/vulsource/k8s.sh
+          - scripts/vulsource/chainguard.sh
+          - scripts/vulsource/debian.sh
+          - scripts/vulsource/github.sh
+          - scripts/vulsource/mariner-vulnerability.sh
+          - scripts/vulsource/photon.sh
+          - scripts/vulsource/redhat.sh
+          - scripts/vulsource/suse.sh
+          - scripts/vulsource/ubuntu-cve-tracker.sh
+          - scripts/vulsource/nvd.sh
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: meta
+        name: Resolve publish metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source=$(basename "${{ matrix.script }}" .sh)
+          tag="latest"
+
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - id: publish
+        name: Run feed and publish to GHCR
+        uses: ./.github/actions/run-feed-to-ghcr
+        env:
+          GHSA_TOKEN: ${{ github.token }}
+          NVD_KEY: ${{ secrets.DBGEN_NVD_KEY }}
+        with:
+          script: ${{ matrix.script }}
+          source: ${{ steps.meta.outputs.source }}
+          tag: ${{ steps.meta.outputs.tag }}
+          artifact-type: application/vnd.neuvector.vuln.feed.v1
+
+      - name: Verify published metadata
+        shell: bash
+        run: |
+          echo "Source: ${{ steps.publish.outputs.source }}"
+          echo "Output: ${{ steps.publish.outputs.output_file }}"
+          echo "Checksum file: ${{ steps.publish.outputs.checksum_file }}"
+          cat "${{ steps.publish.outputs.checksum_file }}"
+          echo "Reference file: ${{ steps.publish.outputs.ref_file }}"
+          cat "${{ steps.publish.outputs.ref_file }}"
+
+      - name: Upload latest OCI ref
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vul-ref-${{ steps.publish.outputs.source }}
+          path: .github/vul-refs/${{ steps.publish.outputs.source }}.ref
+
+      - name: Print published reference
+        shell: bash
+        run: |
+          echo "Published: ${{ steps.publish.outputs.reference }}"
+
+  commit-refs:
+    needs: publish
+    if: ${{ needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download OCI ref artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: vul-ref-*
+          path: ${{ github.workspace }}/artifacts
+
+      - name: Reorganize artifacts and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Reorganize downloaded artifacts to flat structure
+          mkdir -p .github/vul-refs
+          for artifact_dir in artifacts/vul-ref-*; do
+            if [ -d "$artifact_dir" ]; then
+              source_name=$(basename "$artifact_dir" | sed 's/^vul-ref-//')
+              cp "$artifact_dir/${source_name}.ref" ".github/vul-refs/"
+            fi
+          done
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/vul-refs
+
+          if git diff --cached --quiet; then
+            echo "No ref updates to commit"
+            exit 0
+          fi
+
+          git commit -m "Update vulsource OCI refs"
+          git push

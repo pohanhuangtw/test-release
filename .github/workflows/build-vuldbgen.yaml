@@ -1,0 +1,154 @@
+name: V2 build vulndb
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "database version to build without the leading v"
+      flow:
+        description: "continue with the scanner build"
+        default: "True"
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: hosted-ubuntu-arm64-build-server
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Generate App Token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      - name: Clone vul-dbgen
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/vul-dbgen
+          path: vul-dbgen
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Install crane
+        uses: ./.github/actions/install-crane
+      - name: Log in to GHCR for crane
+        run: |
+          echo "${{ steps.app-token.outputs.token  }}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build vulndb
+        run: |
+          set -e
+          echo "build database version=${{ github.event.inputs.version }}"
+
+          OUTPUT_DIR=vul-dbgen/vul-source ./scripts/pull-vul-feed.sh
+
+          echo -e "\n*** make database ***\n"
+          VULN_VER=${{ github.event.inputs.version }} NVD_KEY=${{ secrets.DBGEN_NVD_KEY }} make -C vul-dbgen/ db || { echo "Failed make db"; exit 1; }
+
+          # Update $VERSION/cvedb.regular, $VERSION/VERSION, LATEST/cvedb.regular and LATEST/VERSION
+          mkdir ${{ github.event.inputs.version }}
+          cp vul-dbgen/cvedb.regular ${{ github.event.inputs.version }}/cvedb.regular
+          
+           # Create VERSION file
+          echo "${{ github.event.inputs.version }}" > ${{ github.event.inputs.version }}/VERSION
+          SHA256SUM=$(sha256sum ${{ github.event.inputs.version }}/cvedb.regular | cut -d ' ' -f1)
+          echo "$SHA256SUM" >> ${{ github.event.inputs.version }}/VERSION
+
+          # Download govulndb
+          echo -e "\n*** download govulndb ***\n"
+          curl -sSL --retry 5 --retry-delay 5 https://vuln.go.dev/vulndb.zip -o govulndb.zip
+          GOVULNDB_SHA256=$(sha256sum govulndb.zip | cut -d ' ' -f1)
+          mv govulndb.zip ${{ github.event.inputs.version }}/govulndb.zip
+          echo "$GOVULNDB_SHA256" >> ${{ github.event.inputs.version }}/VERSION
+
+          # Copy to LATEST
+          cp -r "${{ github.event.inputs.version }}" LATEST
+
+          echo "$SHA256SUM" >> vulndbsum.txt
+          echo "$GOVULNDB_SHA256" >> govulndbsum.txt
+
+      - name: Create OCI artifacts for cvedb and govulndb and push to GHCR using crane
+        env:
+          OCI_REPOSITORY_PREFIX: ghcr.io/${{ github.repository_owner }}/vul
+        run: |
+          set -euo pipefail
+
+          ./scripts/ghcr-vulndb-artifact.sh publish \
+            cvedb \
+            "${{ github.event.inputs.version }}/cvedb.regular" \
+            "${{ github.event.inputs.version }}/VERSION" \
+            "${{ github.event.inputs.version }}"
+          
+          ./scripts/ghcr-vulndb-artifact.sh publish \
+            govulndb \
+            "${{ github.event.inputs.version }}/govulndb.zip" \
+            "${{ github.event.inputs.version }}/VERSION" \
+            "${{ github.event.inputs.version }}"
+
+          cat .github/vul-refs/cvedb.ref
+          cat .github/vul-refs/govulndb.ref
+
+      - name: Commit and push vulnerability database references
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/vul-refs/cvedb.ref .github/vul-refs/govulndb.ref
+          git commit -m "Update vulnerability database references for version ${{ github.event.inputs.version }}" || echo "No changes to commit"
+          git push origin ${{ github.ref_name }}
+
+      - name: Upload checksums
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.3
+        with:
+          name: vulndbsums
+          path: |
+            vulndbsum.txt
+            govulndbsum.txt
+
+  update-latest-scanner:
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event.inputs.flow == 'True'
+    steps:
+      - name: Generate App Token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      - name: Clone scanner
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/scanner
+          path: scanner
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Download checksums
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: vulndbsums
+      - name: Update and tag new scanner
+        run: |
+          # NOTE: There is small window that conflict could happen.  TBD.
+          cd scanner/
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Update vulndb info
+          CHECKSUM=`cat ../vulndbsum.txt`
+          GOVULNDB_CHECKSUM=`cat ../govulndbsum.txt`
+          sed -i -e 's/^ARG VULNDB_VERSION=.*/ARG VULNDB_VERSION=${{ github.event.inputs.version }}/g' package/Dockerfile
+          sed -i -e 's/^ARG VULNDB_CHECKSUM=.*/ARG VULNDB_CHECKSUM='$CHECKSUM'/g' package/Dockerfile
+          sed -i -e 's/^ARG GOVULNDB_CHECKSUM=.*/ARG GOVULNDB_CHECKSUM='$GOVULNDB_CHECKSUM'/g' package/Dockerfile
+          git commit package/Dockerfile -m "Update to vulndb v${{ github.event.inputs.version }}"
+          git push origin main
+
+  trigger-scanner-build:
+    runs-on: ubuntu-latest
+    needs: [update-latest-scanner]
+    if: github.event.inputs.flow == 'True'
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Trigger downstream job
+        run: |
+          gh workflow run build-scanner.yaml -f version=${{ github.event.inputs.version }} -f flow=True

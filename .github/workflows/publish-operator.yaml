@@ -1,0 +1,24 @@
+name: Release Proc - Publish to neuvector operator
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: 'Operator image repo to publish'
+      tag:
+        description: 'Operator image tag to publish'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}
+      - run: |
+          docker pull ${{ github.event.inputs.repo }}:${{ github.event.inputs.tag }}
+          docker tag ${{ github.event.inputs.repo }}:${{ github.event.inputs.tag }} neuvector/neuvector-operator:${{ github.event.inputs.tag }}
+          docker push neuvector/neuvector-operator:${{ github.event.inputs.tag }}

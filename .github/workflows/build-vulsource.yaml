@@ -1,0 +1,35 @@
+name: Build scanner - Update vulsource
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  schedule:
+    - cron: '0 15 * * *' # run every day at 15:00
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    if: github.repository == 'neuvector/release'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - run: |
+          export GHSA_TOKEN=${{ github.token }}
+          export REPO_TOKEN=${{ secrets.BECITSTHERE_PUBLISH_TOKEN }}
+
+          git clone --depth 1 https://github.com/neuvector/vul-source.git
+          pushd vul-source
+
+          git config user.email "becitsthere@neuvector.com"
+          git config user.name "becitsthere"
+          REMOTE_REPO="https://becitsthere:${REPO_TOKEN}@github.com/neuvector/vul-source.git"
+          git remote set-url origin $REMOTE_REPO
+
+          ${{ github.workspace }}/scripts/jenkins-ssh-script-vulsource.sh
+
+          echo -e "\n*** push update ***\n"
+          git push origin main || { echo "Failed to git push changes"; }
+
+          popd

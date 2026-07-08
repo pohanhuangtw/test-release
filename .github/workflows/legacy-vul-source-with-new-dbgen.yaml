@@ -1,0 +1,58 @@
+name: bbolt - build vuldbgen
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "database version to build without the leading v"
+      flow:
+        description: "continue with the scanner build"
+        default: "False"
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: hosted-ubuntu-arm64-build-server
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Clone vul-dbgen
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/vul-dbgen
+          path: vul-dbgen
+          token: ${{ secrets.BECITSTHERE_PUBLISH_TOKEN }}
+          ref: refactor/build-vuldb-CI
+      - name: Clone vul-source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/vul-source
+          path: vul-dbgen/vul-source
+          token: ${{ secrets.BECITSTHERE_PUBLISH_TOKEN }}
+      - name: Clone vul-source-private
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/vul-source-private
+          path: vul-dbgen/vul-source-private
+          token: ${{ secrets.BECITSTHERE_PUBLISH_TOKEN }}
+      - name: Build vulndb
+        run: |
+          set -e
+          echo "build database version=${{ github.event.inputs.version }}"
+          mv vul-dbgen/vul-source-private/nvd vul-dbgen/vul-source/
+
+          echo -e "\n*** make database ***\n"
+          VULN_VER=${{ github.event.inputs.version }} NVD_KEY=${{ secrets.DBGEN_NVD_KEY }} make -C vul-dbgen/ db || { echo "Failed make db"; exit 1; }
+      - uses: oras-project/setup-oras@v1
+      - name: Log in to GHCR
+        run: |
+          echo "${{ github.token }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ github.token }}" | cosign login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Publish vul feeds
+        env:
+          OCI_REPOSITORY: ghcr.io/${{ github.repository }}/vul
+        run: |
+          VULN_VER=${{ github.event.inputs.version }} bash scripts/vulsource/publish-vuls.sh

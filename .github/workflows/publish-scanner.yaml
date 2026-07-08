@@ -1,0 +1,142 @@
+name: Release - Publish scanner release
+env:
+  REGCLIENT_VERSION: v0.7.2
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Scanner version to publish'
+      flow:
+        description: 'continue with the scanner build'
+        default: 'False'
+      nvpublic_repo:
+        description: 'nvpublic repo'
+        default: 'nvpublic'
+
+jobs:
+  # TODO: Get credentials from vault
+  publish-v5:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Login to registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}
+      - name: Install regctl
+        run: |
+          mkdir -p $HOME/.local/bin
+          curl -L https://github.com/regclient/regclient/releases/download/${{ env.REGCLIENT_VERSION }}/regctl-linux-amd64 -o $HOME/.local/bin/regctl
+          chmod +x $HOME/.local/bin/regctl
+          echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
+      - name: Publish v5 scanner to dockerhub
+        run: |
+          TARGET=${{ github.repository_owner }}/scanner.private:latest
+          if [[ ! -z "${{ github.event.inputs.version }}" ]]; then
+              TARGET=${{ github.repository_owner }}/scanner.private:${{ github.event.inputs.version }}
+          fi
+
+          # Get the latest released version and compare with manifests/main/versions/scanner, which is the latest version we released.
+          _BUILD_=`docker buildx imagetools inspect $TARGET --format "{{json .}}" | jq -r '.image."linux/amd64".config.Labels."neuvector.vuln_db"'`
+          echo Version = $_BUILD_
+
+          if [[ -z "$_BUILD_" ]]; then
+              echo "Scanner doesn't have required label attached. Exit!"
+              exit 1
+          fi
+
+          _RELEASE_=$(curl https://raw.githubusercontent.com/${{ github.repository_owner }}/manifests/main/versions/scanner)
+          if [[ $_BUILD_ == $_RELEASE_ ]]; then
+              echo "Scanner $_BUILD_ has been released. Exit!"
+              exit 0
+          fi
+
+          echo "Publish scanner version $_BUILD_"
+          regctl image copy $TARGET ${{ github.repository_owner }}/scanner:$_BUILD_-b
+          regctl image copy $TARGET ${{ github.repository_owner }}/scanner:5
+          regctl image copy $TARGET ${{ github.repository_owner }}/scanner:latest
+
+  publish-nvpublic:
+    runs-on: ubuntu-latest
+    needs: [publish-v5]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Login to registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_NVPUBLIC_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_NVPUBLIC_PASSWORD }}
+      - name: Install regctl
+        run: |
+          mkdir -p $HOME/.local/bin
+          curl -L https://github.com/regclient/regclient/releases/download/${{ env.REGCLIENT_VERSION }}/regctl-linux-amd64 -o $HOME/.local/bin/regctl
+          chmod +x $HOME/.local/bin/regctl
+          echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
+
+      - name: Publish to nvpublic
+        run: |
+          TARGET=${{ github.repository_owner }}/scanner:latest
+          if [[ ! -z "${{ github.event.inputs.version }}" ]]; then
+              TARGET=${{ github.repository_owner }}/scanner:${{ github.event.inputs.version }}
+          fi
+
+          _BUILD_=`docker buildx imagetools inspect $TARGET --format "{{json .}}" | jq -r '.image."linux/amd64".config.Labels."neuvector.vuln_db"'`
+          echo "Publish nvpublic scanner version $_BUILD_"
+          VER=$(echo $_BUILD_ | tr -d .)
+          TAG=jenkins-nv-build-scanner-$VER
+
+          regctl image copy ${{ github.repository_owner }}/scanner:latest ${{ github.event.inputs.nvpublic_repo }}/up:sc
+          regctl image copy ${{ github.repository_owner }}/scanner:latest ${{ github.event.inputs.nvpublic_repo }}/up:$TAG
+          regctl image copy ${{ github.repository_owner }}/scanner:latest ${{ github.event.inputs.nvpublic_repo }}/up:latest
+
+  publish-slsa-scanner:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone scanner
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/scanner
+          path: scanner
+          token: ${{ secrets.BECITSTHERE_PUBLISH_TOKEN }}
+          fetch-depth: 50 # Get the last 50 commits, which makes sure that we have necessary commit ID to tag without too much time to pull repo.
+      - name: Login to registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}
+      - name: Update and tag new scanner
+        run: |
+          REV=`docker buildx imagetools inspect ${{ github.repository_owner }}/scanner.private:latest --format "{{json .}}" | jq -r '.image."linux/amd64".config.Labels."neuvector.rev"'`
+          VERSION=`docker buildx imagetools inspect ${{ github.repository_owner }}/scanner.private:latest --format "{{json .}}" | jq -r '.image."linux/amd64".config.Labels."neuvector.vuln_db"'`
+
+          if [[ -z "$REV" ]]; then echo "invalid revision"; exit 2; fi
+          if [[ -z "$VERSION" ]]; then echo "invalid version"; exit 3; fi
+
+          cd scanner/
+          git config user.email "selvam.thangaraj@suse.com"
+          git config user.name "selvamt94"
+          git tag v$VERSION $REV
+          git push origin v$VERSION
+
+  # Note: This job won't wait for SLSA build.  We will need to monitor jobs there.
+  post-publish:
+    runs-on: ubuntu-latest
+    needs: [publish-v5, publish-slsa-scanner]
+    if: github.event.inputs.flow == 'True'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Trigger vdb-explorer and run announce-scanner-version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Update vdb-explorer image and scanner version in manifest repo."
+          gh workflow run build-vdb-explorer.yaml
+          gh workflow run announce-scanner-version.yaml

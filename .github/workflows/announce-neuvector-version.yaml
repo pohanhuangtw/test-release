@@ -1,0 +1,54 @@
+name: Release Proc - Announce neuvector image digest
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to announce'  
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          TAG=${{ github.event.inputs.tag }}
+
+          REPO=neuvector/controller
+          docker pull $REPO:$TAG
+          ID=$(docker inspect $REPO:$TAG -f '{{ .Id }}')
+          CID=${ID#"sha256:"}
+          DIGEST=$(docker inspect $REPO:$TAG -f '{{ index .RepoDigests 0 }}')
+          CDIGEST=${DIGEST#"$REPO@"}
+
+          REPO=neuvector/enforcer
+          docker pull $REPO:$TAG
+          ID=$(docker inspect $REPO:$TAG -f '{{ .Id }}')
+          EID=${ID#"sha256:"}
+          DIGEST=$(docker inspect $REPO:$TAG -f '{{ index .RepoDigests 0 }}')
+          EDIGEST=${DIGEST#"$REPO@"}
+
+          REPO=neuvector/manager
+          docker pull $REPO:$TAG
+          ID=$(docker inspect $REPO:$TAG -f '{{ .Id }}')
+          MID=${ID#"sha256:"}
+          DIGEST=$(docker inspect $REPO:$TAG -f '{{ index .RepoDigests 0 }}')
+          MDIGEST=${DIGEST#"$REPO@"}
+
+          echo "Commit the image ID and digest"
+          
+          git clone https://github.com/neuvector/manifests
+          cd manifests/versions
+          git config user.email "becitsthere@neuvector.com"
+          git config user.name "becitsthere"          
+          export REPO_TOKEN=${{ secrets.BECITSTHERE_PUBLISH_TOKEN }}
+          REMOTE_REPO="https://becitsthere:${REPO_TOKEN}@github.com/neuvector/manifests"
+          git remote set-url origin $REMOTE_REPO
+          
+          mkdir -p $TAG/
+          echo -e "id=$CID\ndigest=$CDIGEST" > $TAG/controller
+          echo -e "id=$EID\ndigest=$EDIGEST" > $TAG/enforcer
+          echo -e "id=$MID\ndigest=$MDIGEST" > $TAG/manager
+          
+          git add $TAG/
+          git commit -m "Add NeuVector image IDs for $TAG"
+          git push origin main

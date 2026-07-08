@@ -1,0 +1,51 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Publish Rancher Feature Chart
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the main branch
+  #push:
+  #  branches: [ main ]
+  #pull_request:
+  #  branches: [ main ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+     inputs:
+       version:
+         description: 'Feature Chart Version'
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/rancher-charts
+          path: rancher-charts
+          token: ${{ secrets.BECITSTHERE_PUBLISH_TOKEN }}
+          ref: ${{ github.event.inputs.rev }}
+      - name: Setup helm
+        uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
+        with:
+          version: v3.16.2
+      # Runs a set of commands using the runners shell
+      - name: Checkout Rancher Feature Chart and Create Feature chart based new helm chart
+        run: |
+          export CHART_DIR=${{ github.workspace }}/charts
+          export SCRIPT_DIR=${{ github.workspace }}/scripts
+          cd $CHART_DIR
+          git remote add upstream https://github.com/rancher/charts.git
+          # Running script to create feature chart
+          _CHART_VER_=${{ github.event.inputs.version }}
+          $SCRIPT_DIR/publish_rancher_chart.sh $_CHART_VER_

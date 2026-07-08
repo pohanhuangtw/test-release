@@ -1,0 +1,41 @@
+name: Release Proc - Publish ironbank data files
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - run: |
+          TAG=${{ github.event.inputs.tag }}
+          SHORT_VER=$(echo $TAG | sed "s/[\.-]//g")
+          C_DATA_FILE="c${SHORT_VER}stage.tgz"
+          E_DATA_FILE="e${SHORT_VER}stage.tgz"
+          M_DATA_FILE="m${SHORT_VER}stage.tgz"
+          S_DATA_FILE="s${SHORT_VER}stage.tgz"
+
+          cd ${{ github.workspace }}/ubi
+
+          RELEASE=$TAG DFILE=$C_DATA_FILE make ubi_controller_data
+          RELEASE=$TAG DFILE=$E_DATA_FILE make ubi_enforcer_data
+          RELEASE=$TAG DFILE=$M_DATA_FILE make ubi_manager_data
+          RELEASE=latest DFILE=$S_DATA_FILE make ubi_scanner_data
+
+          mkdir -p $TAG/
+          mv *.tgz $TAG/
+
+      - uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          aws-region: us-west-2
+          aws-access-key-id: ${{ secrets.IRONBANK_S3_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.IRONBANK_S3_ACCESS_SECRET }}
+      - name: Upload files to S3 bucket
+        run: |
+          aws s3 cp ubi/${{ github.event.inputs.tag }} s3://neuvector-ironbank/${{ github.event.inputs.tag }} --recursive

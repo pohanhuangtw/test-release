@@ -1,0 +1,72 @@
+name: Release base - Build and publish pre-54 build_manager image
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build'
+
+jobs:
+  build-publish-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          BRANCH=${{ github.event.inputs.branch }}
+          if [[ -z "$BRANCH" ]]; then
+              BRANCH="main"
+          fi
+
+          rm -rf manifests
+          git clone https://github.com/neuvector/manifests
+          cd manifests
+          git checkout release/$BRANCH
+
+          cd build/amd64
+          make build_manager BUILD_MANAGER_TAG=$BRANCH
+
+
+          docker login -u "${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}" -p "${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}"
+          docker tag neuvector/build_manager:$BRANCH neuvector/build_manager:amd64.$BRANCH
+          docker push neuvector/build_manager:amd64.$BRANCH
+          docker logout
+
+  build-publish-arm64:
+    runs-on: hosted-ubuntu-arm64-build-server 
+    steps:
+      - run: |
+          BRANCH=${{ github.event.inputs.branch }}
+          if [[ -z "$BRANCH" ]]; then
+              BRANCH="main"
+          fi
+
+          rm -rf manifests
+          git clone https://github.com/neuvector/manifests
+          cd manifests
+          git checkout release/$BRANCH
+
+          cd build/arm64
+          make build_manager BUILD_MANAGER_TAG=$BRANCH
+
+          docker login -u "${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}" -p "${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}"
+          docker tag neuvector/build_manager:$BRANCH neuvector/build_manager:arm64.$BRANCH
+          docker push neuvector/build_manager:arm64.$BRANCH
+          docker logout
+
+  build-publish-multi-arch:
+    runs-on: ubuntu-latest
+    needs: [build-publish-amd64, build-publish-arm64]
+    steps:
+      - run: |
+          BRANCH=${{ github.event.inputs.branch }}
+          if [[ -z "$BRANCH" ]]; then
+              BRANCH="main"
+          fi
+
+          docker login -u "${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}" -p "${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}"
+
+          docker manifest create neuvector/build_manager:$BRANCH \
+              neuvector/build_manager:amd64.$BRANCH \
+              neuvector/build_manager:arm64.$BRANCH
+          docker manifest push neuvector/build_manager:$BRANCH
+
+          docker logout

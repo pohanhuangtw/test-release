@@ -1,0 +1,40 @@
+name: Build updater - Build updater image
+on:
+  schedule:
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/updater
+          path: updater
+          token: ${{ secrets.BECITSTHERE_PUBLISH_TOKEN }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        with:
+          image: tonistiigi/binfmt:qemu-v8.1.5
+      - name: Login to registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}
+      - name: Build updater
+        env:
+          VERSION: latest
+          PLATFORMS: linux/arm64,linux/amd64
+        run: |
+          cd updater/
+          make buildx-machine
+          docker buildx build --no-cache -f package/Dockerfile --builder neuvector \
+            --build-arg VERSION=$VERSION \
+            --build-arg COMMIT=$(git rev-parse --short HEAD) \
+            --platform=$PLATFORMS \
+            -t ${{ github.repository_owner }}/updater:latest --push .

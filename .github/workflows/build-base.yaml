@@ -1,0 +1,78 @@
+name: Release base - Build and publish base images
+
+on:
+  schedule:
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build'
+        default: 'main'
+
+jobs:
+  build-publish-amd64:
+    if: github.repository == 'neuvector/release'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          BRANCH=${{ github.event.inputs.branch }}
+          if [[ -z "$BRANCH" ]]; then
+              BRANCH="main"
+          fi
+
+          rm -rf manifests
+          git clone --depth 1 https://github.com/neuvector/manifests
+          cd manifests
+          git checkout $BRANCH
+
+          cd build/amd64
+          make -f Makefile.bci base
+
+          docker login -u nvbuild -p "${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}"
+          make -f Makefile.bci push
+          docker logout
+
+  build-publish-arm64:
+    runs-on: hosted-ubuntu-arm64-build-server 
+    if: github.repository == 'neuvector/release'
+    steps:
+      - run: |
+          BRANCH=${{ github.event.inputs.branch }}
+          if [[ -z "$BRANCH" ]]; then
+              BRANCH="main"
+          fi
+
+          rm -rf manifests
+          git clone --depth 1 https://github.com/neuvector/manifests
+          cd manifests
+          git checkout $BRANCH
+
+          cd build/arm64
+          make -f Makefile.bci base
+
+          docker login -u nvbuild -p "${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}"
+          make -f Makefile.bci push
+          docker logout
+
+  build-publish-multi-arch:
+    runs-on: ubuntu-latest
+    if: github.repository == 'neuvector/release'
+    needs: [build-publish-amd64, build-publish-arm64]
+    steps:
+      - run: |
+          docker login -u nvbuild -p "${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}"
+
+          for IMAGE in "controller" "enforcer" "manager" "all" "scanner" "adapter"
+          do
+              docker manifest create neuvector/${IMAGE}_base:latest \
+                  neuvector/${IMAGE}_base:amd64.latest \
+                  neuvector/${IMAGE}_base:arm64.latest
+              docker manifest push neuvector/${IMAGE}_base:latest
+          done
+
+          docker manifest create neuvector/updater:latest \
+              neuvector/updater:amd64.latest \
+              neuvector/updater:arm64.latest
+          docker manifest push neuvector/updater:latest
+
+          docker logout

@@ -1,0 +1,30 @@
+name: Announce scanner version
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  Announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone manifests
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/manifests
+          path: manifests
+          token: ${{ secrets.BECITSTHERE_PUBLISH_TOKEN }}
+      - name: Update scanner version
+        run: |
+          NEW_SCANNER_VER=$(docker buildx imagetools inspect ${{ github.repository_owner }}/scanner:latest --format "{{json .}}" | jq '.image."linux/amd64".config.Labels."neuvector.vuln_db"')
+
+          if [[ -z "$NEW_SCANNER_VER" ]]; then echo "invalid scanner version"; exit 1; fi
+          echo "New scanner version is $NEW_SCANNER_VER"
+
+          cd manifests
+          git config user.email "selvam.thangaraj@suse.com"
+          git config user.name "selvamt94"
+          echo $NEW_SCANNER_VER > versions/scanner
+          git add versions/scanner
+          git commit -m "Update scanner version to $NEW_SCANNER_VER"
+          git push origin main

@@ -1,0 +1,79 @@
+name: Build - Build and upload release
+env:
+  REGCLIENT_VERSION: v0.7.2
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build'
+
+jobs:
+  # After 5.4.2, images are published via image tagging automatically except allinone.
+  # We repack controller, enforcer and manager images here and publish to the same place with these images.
+  build-allinone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/allinone
+          path: allinone
+          token: ${{ secrets.BECITSTHERE_PUBLISH_TOKEN }}
+          ref: ${{ github.event.inputs.tag }}
+          fetch-depth: 0
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+      - name: Login to registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}
+      - run: |
+          BRANCH_TAG=${{ github.event.inputs.tag }}
+          if [[ $BRANCH_TAG == v* ]]; then
+              TAG=${BRANCH_TAG#v}
+          else
+              echo "Tag must start with 'v'"
+              exit 1
+          fi
+
+          REPO=${{ github.repository_owner }} SRCREPO=${{ github.repository_owner }} TAG=$TAG NV_VERSION=$TAG make -C allinone/ push-image
+
+  sync-images:
+    runs-on: hosted-ubuntu-arm64-build-server
+    needs: [build-allinone]
+    steps:
+      - name: Install regctl
+        run: |
+          mkdir -p $HOME/.local/bin
+          curl -L https://github.com/regclient/regclient/releases/download/${{ env.REGCLIENT_VERSION }}/regctl-linux-arm64 -o $HOME/.local/bin/regctl
+          chmod +x $HOME/.local/bin/regctl
+          echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
+      - name: Push images to lab
+        env:
+          LAB_REGISTRY: ${{ secrets.LAB_REGISTRY }}
+        run: |
+          BRANCH_TAG=${{ github.event.inputs.tag }}
+          if [[ $BRANCH_TAG == v* ]]; then
+              TAG=${BRANCH_TAG#v}
+          else
+              echo "Tag must start with 'v'"
+              exit 1
+          fi
+
+          for IMAGE in "controller" "enforcer" "manager" "allinone"
+          do
+              echo "Push $IMAGE:$TAG to local registry"
+              regctl --host reg=$LAB_REGISTRY,tls=insecure image copy ${{ github.repository_owner }}/${IMAGE}:${TAG} $LAB_REGISTRY/neuvector/${IMAGE}:$TAG
+          done
+
+          # Invoke the Jenkins job
+          echo "*** Invoke Jenkins nv-build-release-oss job ***"
+          RESP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST ${{ secrets.LAB_JENKINS }}/job/nv-build-release-oss/buildWithParameters?NV_RELEASE_TAG=${BRANCH_TAG} --user build:${{ secrets.JENKINS_BUILD_TOKEN }})
+          if [[ $RESP_CODE != \20* ]]; then
+              echo "API call returns $RESP_CODE"
+              exit -1
+          fi

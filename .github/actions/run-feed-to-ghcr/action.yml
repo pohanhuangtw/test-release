@@ -1,0 +1,185 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+name: Run feed script and publish to GHCR
+description: |
+  Runs a vulsource script that writes `output_file` or `output_path` to
+  GITHUB_OUTPUT, then publishes the resulting file to GHCR as an OCI artifact
+  using ORAS.
+
+inputs:
+  script:
+    description: Path to the script relative to the repository root
+    required: true
+  source:
+    description: Source name used in the OCI path, defaults to the script basename without .sh
+    required: false
+  repository:
+    description: OCI repository prefix, defaults to ghcr.io/<owner>/vul/<source>
+    required: false
+  tag:
+    description: OCI tag to publish, defaults to a UTC timestamp
+    required: false
+  artifact-type:
+    description: OCI artifact type
+    required: false
+    default: application/vnd.neuvector.vuln.feed.v1
+  file-media-type:
+    description: Media type for the published file, auto-detected when omitted
+    required: false
+  username:
+    description: Registry username, defaults to github.actor
+    required: false
+  password:
+    description: Registry password or token, defaults to github.token
+    required: false
+  checksum-file:
+    description: Output path for the generated sha256 file
+    required: false
+  ref-file:
+    description: Output path for the generated OCI reference file, defaults to .github/vul-refs/<source>.ref in the current repo workspace
+    required: false
+
+outputs:
+  source:
+    description: Source name used in the OCI path
+    value: ${{ steps.run.outputs.source }}
+  output_file:
+    description: File produced by the script
+    value: ${{ steps.run.outputs.output_file }}
+  checksum_file:
+    description: Generated checksum file
+    value: ${{ steps.publish.outputs.checksum_file }}
+  ref_file:
+    description: File containing the fully qualified OCI reference
+    value: ${{ steps.publish.outputs.ref_file }}
+  digest:
+    description: Published OCI digest
+    value: ${{ steps.publish.outputs.digest }}
+  reference:
+    description: Fully qualified OCI reference including digest
+    value: ${{ steps.publish.outputs.reference }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      name: Run feed script
+      shell: bash
+      env:
+        SCRIPT: ${{ inputs.script }}
+        INPUT_SOURCE: ${{ inputs.source }}
+      run: |
+        set -euo pipefail
+
+        script_output=$(mktemp)
+        trap 'rm -f "$script_output"' EXIT
+
+        source_name="${INPUT_SOURCE:-$(basename "$SCRIPT" .sh)}"
+        if [ -z "$source_name" ]; then
+          echo "Unable to determine source name" >&2
+          exit 1
+        fi
+
+        GITHUB_OUTPUT="$script_output" bash "$GITHUB_WORKSPACE/$SCRIPT"
+
+        output_file=$(awk -F= '$1 == "output_file" { print substr($0, index($0, "=") + 1) }' "$script_output" | tail -n 1)
+        output_path=$(awk -F= '$1 == "output_path" { print substr($0, index($0, "=") + 1) }' "$script_output" | tail -n 1)
+
+        if [ -z "$output_file" ] && [ -z "$output_path" ]; then
+          echo "Feed script did not emit output_file or output_path" >&2
+          exit 1
+        fi
+
+        if [ -n "$output_path" ]; then
+          if [[ "$output_path" != /* ]]; then
+            output_path="$GITHUB_WORKSPACE/$output_path"
+          fi
+
+          output_file="$output_path"
+        fi
+
+        if [[ "$output_file" != /* ]]; then
+          output_file="$GITHUB_WORKSPACE/$output_file"
+        fi
+
+        if [ ! -f "$output_file" ]; then
+          echo "Feed output file not found: $output_file" >&2
+          exit 1
+        fi
+
+        echo "source=$source_name" >> "$GITHUB_OUTPUT"
+        echo "output_file=$output_file" >> "$GITHUB_OUTPUT"
+
+    - name: Install crane
+      uses: ./.github/actions/install-crane
+
+    - id: publish
+      name: Publish output to GHCR
+      shell: bash
+      env:
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_TAG: ${{ inputs.tag }}
+        INPUT_ARTIFACT_TYPE: ${{ inputs.artifact-type }}
+        INPUT_USERNAME: ${{ inputs.username }}
+        INPUT_PASSWORD: ${{ inputs.password }}
+        INPUT_CHECKSUM_FILE: ${{ inputs.checksum-file }}
+        INPUT_REF_FILE: ${{ inputs.ref-file }}
+        SOURCE_NAME: ${{ steps.run.outputs.source }}
+        OUTPUT_FILE: ${{ steps.run.outputs.output_file }}
+        DEFAULT_TOKEN: ${{ github.token }}
+        DEFAULT_REPOSITORY_PREFIX: ghcr.io/${{ github.repository_owner }}/vul
+        DEFAULT_USERNAME: ${{ github.actor }}
+      run: |
+        set -euo pipefail
+
+        repository="${INPUT_REPOSITORY:-$DEFAULT_REPOSITORY_PREFIX/$SOURCE_NAME}"
+        tag="${INPUT_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
+        artifact_type="${INPUT_ARTIFACT_TYPE}"
+        username="${INPUT_USERNAME:-$DEFAULT_USERNAME}"
+        password="${INPUT_PASSWORD:-$DEFAULT_TOKEN}"
+        checksum_file="${INPUT_CHECKSUM_FILE:-$GITHUB_WORKSPACE/${SOURCE_NAME}.sha256}"
+        ref_file="${INPUT_REF_FILE:-$GITHUB_WORKSPACE/.github/vul-refs/${SOURCE_NAME}.ref}"
+        registry="${repository%%/*}"
+        reference="${repository}:${tag}"
+
+        if [ -z "$password" ]; then
+          echo "Registry password or token is required" >&2
+          exit 1
+        fi
+
+        mkdir -p "$(dirname "$checksum_file")" "$(dirname "$ref_file")"
+        sha256sum "$OUTPUT_FILE" > "$checksum_file"
+
+        # Create a minimal OCI image with the vulnerability feed as a layer
+        temp_dir=$(mktemp -d)
+        trap 'rm -rf "$temp_dir"' EXIT
+
+        cp "$OUTPUT_FILE" "$checksum_file" "$temp_dir/"
+
+        # Create Dockerfile that copies the feed files
+        printf '%s\n' \
+          'FROM scratch' \
+          'COPY . /feed/' \
+          'LABEL org.opencontainers.image.title="Vulnerability Feed"' \
+          'LABEL vul.artifact.type="application/vnd.neuvector.vuln.feed.v1"' \
+          > "$temp_dir/Dockerfile"
+
+        # Build and push using Docker
+        printf '%s' "$password" | docker login "$registry" -u "$username" --password-stdin
+
+        docker buildx build \
+          --platform linux/amd64 \
+          --tag "$reference" \
+          --push \
+          --quiet \
+          "$temp_dir" > /dev/null
+
+        # Get the digest of the pushed image
+        digest=$(docker buildx imagetools inspect "$reference" --format '{{json .}}' | jq -r '.manifest.digest')
+
+        full_reference="${reference}@${digest}"
+        printf '%s\n' "$full_reference" > "$ref_file"
+
+        echo "checksum_file=$checksum_file" >> "$GITHUB_OUTPUT"
+        echo "ref_file=$ref_file" >> "$GITHUB_OUTPUT"
+        echo "digest=$digest" >> "$GITHUB_OUTPUT"
+        echo "reference=$full_reference" >> "$GITHUB_OUTPUT"

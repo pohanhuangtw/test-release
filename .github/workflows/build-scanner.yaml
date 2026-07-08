@@ -1,0 +1,150 @@
+name: Build scanner - Build scanner image
+env:
+  REGCLIENT_VERSION: v0.7.2
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Scanner version to build'
+      rev:
+        description: 'Scanner repo revision'
+      flow:
+        description: 'continue with the scanner publish'
+        default: 'False'
+  workflow_call:
+
+# TODO: Migrate to vault
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/scanner
+          path: scanner
+          token: ${{ secrets.BECITSTHERE_PUBLISH_TOKEN }}
+          ref: ${{ github.event.inputs.rev }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        with:
+          image: tonistiigi/binfmt:qemu-v8.1.5
+      - name: Login to registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}
+      - name: Generate App Token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      - name: Install crane
+        uses: ./.github/actions/install-crane
+      - name: Log in to GHCR for crane
+        run: |
+          echo "${{ steps.app-token.outputs.token }}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Install regctl
+        run: |
+          case "$(uname -m)" in
+            x86_64|amd64) regctl_arch=amd64 ;;
+            aarch64|arm64) regctl_arch=arm64 ;;
+            *)
+              echo "Unsupported architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+          mkdir -p $HOME/.local/bin
+          curl -L "https://github.com/regclient/regclient/releases/download/${{ env.REGCLIENT_VERSION }}/regctl-linux-${regctl_arch}" -o $HOME/.local/bin/regctl
+          chmod +x $HOME/.local/bin/regctl
+          echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
+      - name: Download vulnerability databases from GHCR
+        env:
+          OCI_REPOSITORY_PREFIX: ghcr.io/${{ github.repository_owner }}/vul
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+
+          ./scripts/ghcr-vulndb-artifact.sh download \
+            cvedb \
+            cvedb.regular \
+            scanner/data/cvedb.regular \
+            "$VERSION"
+
+          ./scripts/ghcr-vulndb-artifact.sh download \
+            govulndb \
+            govulndb.zip \
+            scanner/data/govulndb.zip \
+            "$VERSION"
+
+          ls -lh scanner/data/cvedb.regular scanner/data/govulndb.zip
+      - name: Build v6 scanner
+        env:
+          VERSION: v${{github.event.inputs.version }}
+          TAG: ${{github.event.inputs.version }}
+          PLATFORMS: linux/arm64,linux/amd64
+        run: |
+          # This command will build scanner and store in $OWNER/scanner.private:$TAG.v6
+          cd scanner/
+          make buildx-machine
+          docker buildx build -f package/Dockerfile --builder neuvector \
+            --build-arg VERSION=$VERSION \
+            --build-arg COMMIT=$(git rev-parse --short HEAD) \
+            --platform=$PLATFORMS \
+            -t pohanhuangtw/scanner.private:$TAG.v6 --push .
+      - name: Build v5 scanner and publish to scanner.private
+        env:
+          TAG: ${{github.event.inputs.version }}
+          PLATFORMS: linux/arm64,linux/amd64
+        run: |
+          cd build/scanner/
+          make buildx-machine
+          docker buildx build -f package/Dockerfile --builder neuvector \
+            --build-arg SCANNER_IMAGE=pohanhuangtw/scanner.private:$TAG.v6 \
+            --platform=$PLATFORMS \
+            -t pohanhuangtw/scanner.private:$TAG --push .
+          regctl image copy pohanhuangtw/scanner.private:$TAG pohanhuangtw/scanner.private:latest
+
+  publish:
+    runs-on: hosted-ubuntu-arm64-build-server
+    needs: [build]
+    if: github.event.inputs.flow == 'True'
+    steps:
+      - name: Login to registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_NVBUILD_PASSWORD_READONLY }}
+      - name: Install regctl
+        run: |
+          case "$(uname -m)" in
+            x86_64|amd64) regctl_arch=amd64 ;;
+            aarch64|arm64) regctl_arch=arm64 ;;
+            *)
+              echo "Unsupported architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+          mkdir -p $HOME/.local/bin
+          curl -L "https://github.com/regclient/regclient/releases/download/${{ env.REGCLIENT_VERSION }}/regctl-linux-${regctl_arch}" -o $HOME/.local/bin/regctl
+          chmod +x $HOME/.local/bin/regctl
+          echo "$HOME/.local/bin" >> "${GITHUB_PATH}"
+      - name: Publish images to lab
+        env:
+          TAG: ${{github.event.inputs.version }}
+          LAB_REGISTRY: ${{ secrets.LAB_REGISTRY }}
+        run: |
+          # Sync v5 only for now until we migrate automation to support v6.
+          VER=$(echo ${{ github.event.inputs.version }} | tr -d .)
+          regctl --host reg=$LAB_REGISTRY,tls=insecure image copy pohanhuangtw/scanner.private:$TAG $LAB_REGISTRY/pohanhuangtw/scanner:jenkins-nv-build-updater-$VER
+          regctl --host reg=$LAB_REGISTRY,tls=insecure image copy pohanhuangtw/scanner.private:$TAG $LAB_REGISTRY/pohanhuangtw/scanner:jenkins-nv-build-scanner-$VER
+          regctl --host reg=$LAB_REGISTRY,tls=insecure image copy pohanhuangtw/scanner.private:$TAG $LAB_REGISTRY/pohanhuangtw/scanner:latest
+
+          # Invoke the Jenkins job
+          curl -X POST ${{ secrets.LAB_JENKINS }}/job/automation_check_scanner/build \
+                  --user build:${{ secrets.JENKINS_BUILD_TOKEN }}

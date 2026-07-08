@@ -1,0 +1,100 @@
+# Expected vul-source directory structure after pull
+# Format: path [type] [note]
+# Types: D (directory), F (file), L (symlink), * (any)
+# Notes: optional, preserved, multiple
+#
+# Validation levels:
+# - CRITICAL: Preserved feeds (must exist, must NOT be extracted)
+# - REQUIRED: Key directories and files (must exist)
+# - OPTIONAL: May or may not exist depending on upstream
+
+# ============================================================================
+# CRITICAL: Preserved feeds (must NOT be extracted)
+# ============================================================================
+
+apps/ D
+apps/golang-osv.zip F preserved
+apps/k8s.json.gz F preserved
+
+chainguard/ D
+chainguard/osv-v2.zip F preserved
+
+# ============================================================================
+# REQUIRED: Extracted feeds (must be properly extracted)
+# ============================================================================
+
+# Amazon Linux
+amazon/ D
+amazon/alas.rss F
+amazon/alas2.rss F
+amazon/alas2022.rss F
+amazon/alas2023.rss F
+
+# Debian
+debian/ D
+debian/debian.json F
+debian/debian-*.json * optional
+
+# Mariner
+mariner-vulnerability/ D
+mariner-vulnerability/cbl-mariner-2.0-oval.xml F
+mariner-vulnerability/osv/ D
+mariner-vulnerability/osv/*.json * multiple
+
+# Ubuntu - Main structure
+ubuntu/ D
+ubuntu/ubuntu-cve-tracker/ D
+ubuntu/ubuntu-cve-tracker/active/ D
+ubuntu/ubuntu-cve-tracker/retired/ D
+ubuntu/ubuntu-cve-tracker/scripts/ D
+ubuntu/ubuntu-cve-tracker/test/ D
+
+# Ubuntu - Key subdirectories under scripts/
+ubuntu/ubuntu-cve-tracker/scripts/data_generation/ D optional
+ubuntu/ubuntu-cve-tracker/scripts/datalib/ D optional
+ubuntu/ubuntu-cve-tracker/scripts/uct/ D optional
+ubuntu/ubuntu-cve-tracker/scripts/usn/ D optional
+
+# Ubuntu - Key subdirectories under test/
+ubuntu/ubuntu-cve-tracker/test/manifests/ D optional
+ubuntu/ubuntu-cve-tracker/test/osv/ D optional
+ubuntu/ubuntu-cve-tracker/test/test-source-map-data/ D optional
+
+# RedHat - Version directories
+redhat/ D
+redhat/7/ D optional
+redhat/8/ D optional
+redhat/9/ D optional
+
+# ============================================================================
+# OPTIONAL: May not exist depending on configuration
+# ============================================================================
+
+# App manual
+app-manual/ D optional
+app-manual/*.json * optional
+
+# GitHub
+github/ D optional
+github/*.json * optional
+
+# NVD
+nvd/ D optional
+nvd/*.json * optional
+
+# Photon
+photon/ D optional
+photon/*.json * optional
+
+# SUSE
+suse/ D optional
+suse/*.xml * optional
+
+# Ubuntu - Additional optional directories
+ubuntu/ubuntu-cve-tracker/boilerplates/ D optional
+ubuntu/ubuntu-cve-tracker/bugs/ D optional
+ubuntu/ubuntu-cve-tracker/cache/ D optional
+ubuntu/ubuntu-cve-tracker/graphing/ D optional
+ubuntu/ubuntu-cve-tracker/ignored/ D optional
+ubuntu/ubuntu-cve-tracker/meta_lists/ D optional
+ubuntu/ubuntu-cve-tracker/old/ D optional

@@ -1,0 +1,48 @@
+name: Release - Publish release images for pre 5.4.2
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish'
+      latest:
+        description: 'Tag with latest'
+        default: 'False'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}
+      - run: |
+          BRANCH_TAG=${{ github.event.inputs.tag }}
+          if [[ $BRANCH_TAG == v* ]]; then
+              TAG=${BRANCH_TAG#v}
+          else
+              echo "Tag must start with 'v'"
+              exit 1
+          fi
+
+          for IMAGE in "controller" "enforcer" "manager" "allinone"
+          do
+              docker pull neuvector/${IMAGE}.private:amd64.$TAG
+              docker pull neuvector/${IMAGE}.private:arm64.$TAG
+
+              docker tag neuvector/${IMAGE}.private:amd64.$TAG neuvector/${IMAGE}:amd64.$TAG
+              docker tag neuvector/${IMAGE}.private:arm64.$TAG neuvector/${IMAGE}:arm64.$TAG
+              docker push neuvector/${IMAGE}:amd64.$TAG
+              docker push neuvector/${IMAGE}:arm64.$TAG
+
+              docker manifest create neuvector/${IMAGE}:$TAG neuvector/${IMAGE}:amd64.$TAG neuvector/${IMAGE}:arm64.$TAG
+              docker manifest push neuvector/${IMAGE}:$TAG
+
+              if [[ ${{ github.event.inputs.latest }} == "True" ]]; then
+                  docker manifest create neuvector/${IMAGE}:latest neuvector/${IMAGE}:amd64.$TAG neuvector/${IMAGE}:arm64.$TAG
+                  docker manifest push neuvector/${IMAGE}:latest
+              fi
+          done

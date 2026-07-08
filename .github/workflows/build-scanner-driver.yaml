@@ -1,0 +1,61 @@
+name: Build scanner driver - Scanner daily build
+
+on:
+  schedule:
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Scanner version to build'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Clone build-status
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/build-status
+          path: build-status
+          token: ${{ secrets.BECITSTHERE_PUBLISH_TOKEN }}
+      - name: Generate next build version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VULN_VER=${{ github.event.inputs.version }}
+          if [[ -z "$VULN_VER" ]]; then
+              cd build-status
+
+              VULN_VER=$(cat scanner/next)
+              echo "scanner version to be created: $VULN_VER"
+
+              # calculate the next version
+              MAJOR="${VULN_VER%%\.*}"
+              MINOR="${VULN_VER#*.}"
+
+              if [[ "$MINOR" == "999" ]]; then
+                  MINOR=0
+                  MAJOR=$((10#$MAJOR + 1))
+              else
+                  MINOR=$((10#$MINOR + 1))
+              fi
+              NEXT_VER=$(printf "%d.%03d" $MAJOR $MINOR)
+
+              echo "write next build version: $NEXT_VER"
+              git config user.email "selvam.thangaraj@suse.com"
+              git config user.name "selvamt94"
+              echo $NEXT_VER > scanner/next
+              git add scanner/next
+              git commit -m "Update next scanner build version to $NEXT_VER"
+              git push origin main
+
+              # clean up
+              cd ..
+              rm -rf build-status
+          fi
+
+          echo "build database version=$VULN_VER"
+          gh workflow run build-vuldbgen.yaml -f version=$VULN_VER -f flow=True

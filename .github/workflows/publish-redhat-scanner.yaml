@@ -1,0 +1,33 @@
+name: Release Proc - Publish ubi scanner images to redhat registry
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - run: |
+          TAG=${{ github.event.inputs.tag }}
+          SHORT_VER=$(echo $TAG | sed "s/[\.-]//g")
+          S_DATA_FILE=s${SHORT_VER}stage.tgz
+
+          cd ${{ github.workspace }}/ubi
+
+          RELEASE=latest DFILE=$S_DATA_FILE make ubi_scanner
+
+          RH_REG="quay.io"
+          RH_REG_PATH="redhat-isv-containers"
+
+          echo "Publish scanner image"
+          RH_REPO_ORG="5fab0b4617c9c88249a6a1e0"
+          printf '%s' "${{ secrets.REDHAT_SCANNER_REPO_PASSWORD }}" | docker login -u ${RH_REG_PATH}+${RH_REPO_ORG}-robot --password-stdin $RH_REG
+          docker tag neuvector/scanner.ubi:latest $RH_REG/$RH_REG_PATH/$RH_REPO_ORG:$TAG
+          docker push $RH_REG/$RH_REG_PATH/$RH_REPO_ORG:$TAG
+          docker logout

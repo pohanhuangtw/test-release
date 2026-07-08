@@ -1,0 +1,146 @@
+name: Update Vulnerability Feeds
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+env:
+  VUL_SOURCE_DIR: vul-source
+
+jobs:
+  update:
+    name: Update vulnerability sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Check out vul-source repo
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ github.repository_owner }}/${{ env.VUL_SOURCE_DIR }}
+          path: ${{ env.VUL_SOURCE_DIR }}
+          persist-credentials: false
+
+      - if: always()
+        name: Go Vulnerability Database
+        uses: ./.github/actions/update-source
+        with:
+          script: scripts/vulsource/golang.sh
+          commit-message: "Go Vulnerability Database"
+          client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repository: ${{ env.VUL_SOURCE_DIR }}
+
+      - if: always()
+        name: Kubernetes CVE Feed
+        uses: ./.github/actions/update-source
+        with:
+          script: scripts/vulsource/k8s.sh
+          commit-message: "Kubernetes CVE Feed"
+          client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }} 
+          repository: ${{ env.VUL_SOURCE_DIR }}
+
+      # - if: always()
+      #   name: Chainguard Security Data
+      #   uses: ./.github/actions/update-source
+      #   with:
+      #     script: scripts/vulsource/chainguard.sh
+      #     commit-message: "Chainguard Security Data"
+      #     client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+      #     private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      #     owner: ${{ github.repository_owner }} 
+      #     repository: ${{ env.VUL_SOURCE_DIR }}
+
+      # - if: always()
+      #   name: Ubuntu CVE Tracker
+      #   uses: ./.github/actions/update-source
+      #   with:
+      #     script: scripts/vulsource/ubuntu.sh
+      #     commit-message: "Ubuntu CVE Tracker"
+      #     client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+      #     private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      #     owner: ${{ github.repository_owner }} 
+      #     repository: ${{ env.VUL_SOURCE_DIR }}
+
+      # - if: always()
+      #   name: CBL-Mariner Vulnerability Data
+      #   uses: ./.github/actions/update-source
+      #   with:
+      #     script: scripts/vulsource/mariner.sh
+      #     commit-message: "CBL-Mariner Vulnerability Data"
+      #     client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+      #     private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      #     owner: ${{ github.repository_owner }}   
+      #     repository: ${{ env.VUL_SOURCE_DIR }}
+
+      # - if: always()
+      #   name: Debian Security Bug Tracker
+      #   uses: ./.github/actions/update-source
+      #   with:
+      #     script: scripts/vulsource/debian.sh
+      #     commit-message: "Debian Security Bug Tracker"
+      #     client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+      #     private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      #     owner: ${{ github.repository_owner }} 
+      #     repository: ${{ env.VUL_SOURCE_DIR }}
+
+      # - if: always()
+      #   name: SUSE OVAL
+      #   uses: ./.github/actions/update-source
+      #   with:
+      #     script: scripts/vulsource/suse.sh
+      #     commit-message: "SUSE OVAL"
+      #     client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+      #     private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      #     owner: ${{ github.repository_owner }} 
+      #     repository: ${{ env.VUL_SOURCE_DIR }}
+
+      # - if: always()
+      #   name: Amazon Linux Security Center
+      #   uses: ./.github/actions/update-source
+      #   with:
+      #     script: scripts/vulsource/amazon.sh
+      #     commit-message: "Amazon Linux Security Center"
+      #     client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+      #     private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      #     owner: ${{ github.repository_owner }} 
+      #     repository: ${{ env.VUL_SOURCE_DIR }}
+
+      # - if: always()
+      #   name: Photon Security Advisories
+      #   uses: ./.github/actions/update-source
+      #   with:
+      #     script: scripts/vulsource/photon.sh
+      #     commit-message: "Photon Security Advisories"
+      #     client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+      #     private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      #     owner: ${{ github.repository_owner }} 
+      #     repository: ${{ env.VUL_SOURCE_DIR }}
+
+      # - if: always()
+      #   name: Red Hat OVAL v2
+      #   uses: ./.github/actions/update-source
+      #   with:
+      #     script: scripts/vulsource/redhat.sh
+      #     commit-message: "Red Hat OVAL v2"
+      #     client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+      #     private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      #     owner: ${{ github.repository_owner }} 
+      #     repository: ${{ env.VUL_SOURCE_DIR }}
+
+      # - if: always()
+      #   name: GitHub Security Advisories
+      #   uses: ./.github/actions/update-source
+      #   env:
+      #     GHSA_TOKEN: ${{ github.token }}
+      #   with:
+      #     script: scripts/vulsource/github.sh
+      #     commit-message: "GitHub Security Advisories"
+      #     client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+      #     private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      #     owner: ${{ github.repository_owner }} 
+      #     repository: ${{ env.VUL_SOURCE_DIR }}

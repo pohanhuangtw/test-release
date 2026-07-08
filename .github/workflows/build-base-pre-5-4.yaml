@@ -1,0 +1,73 @@
+name: Release base - Build and publish Pre-54 base images
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build Pre-54 base images'
+        default: 'main'
+
+jobs:
+  build-publish-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          BRANCH=${{ github.event.inputs.branch }}
+          if [[ -z "$BRANCH" ]]; then
+              BRANCH="main"
+          fi
+
+          rm -rf manifests
+          git clone https://github.com/neuvector/manifests
+          cd manifests
+          git checkout release/$BRANCH
+
+          cd build/amd64
+          make -f Makefile.alpine base
+
+          docker login -u "${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}" -p "${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}"
+          make -f Makefile.alpine push TAG=$BRANCH
+          docker logout
+
+  build-publish-arm64:
+    runs-on: hosted-ubuntu-arm64-build-server 
+    steps:
+      - run: |
+          BRANCH=${{ github.event.inputs.branch }}
+          if [[ -z "$BRANCH" ]]; then
+              BRANCH="main"
+          fi
+
+          rm -rf manifests
+          git clone https://github.com/neuvector/manifests
+          cd manifests
+          git checkout release/$BRANCH
+
+          cd build/arm64
+          make -f Makefile.bci base
+
+          docker login -u "${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}" -p "${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}"
+          make -f Makefile.bci push TAG=$BRANCH
+          docker logout
+
+  build-publish-multi-arch:
+    runs-on: ubuntu-latest
+    needs: [build-publish-amd64, build-publish-arm64]
+    steps:
+      - run: |
+          BRANCH=${{ github.event.inputs.branch }}
+          if [[ -z "$BRANCH" ]]; then
+              BRANCH="main"
+          fi
+
+          docker login -u "${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}" -p "${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}"
+
+          for IMAGE in "controller" "enforcer" "manager" "all" "adapter"
+          do
+              docker manifest create neuvector/${IMAGE}_base:$BRANCH \
+                  neuvector/${IMAGE}_base:amd64.$BRANCH \
+                  neuvector/${IMAGE}_base:arm64.$BRANCH
+              docker manifest push neuvector/${IMAGE}_base:$BRANCH
+          done
+
+          docker logout

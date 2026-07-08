@@ -1,0 +1,109 @@
+name: Build - Build and upload release for pre 5.4.2
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build'
+
+jobs:
+  build-publish-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Login to registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}
+      - run: |
+          cd ${{ github.workspace }}; cd .. # put us in parent folder, release/...
+
+          BRANCH_TAG=${{ github.event.inputs.tag }}
+          if [[ $BRANCH_TAG == v* ]]; then
+              TAG=${BRANCH_TAG#v}
+          else
+              echo "Tag must start with 'v'"
+              exit 1
+          fi
+
+          release/scripts/jenkins-ssh-script-fleet.sh default $BRANCH_TAG nv-build-release-fleet nv-build-release-fleet-000 000 nvpublic
+          release/scripts/jenkins-ssh-script-manager.sh default $BRANCH_TAG nv-build-release-manager nv-build-release-manager-000 000 nvpublic
+          release/scripts/jenkins-ssh-script-allinone.sh default $BRANCH_TAG nv-build-release-allinone nv-build-release-allinone-000 000 nv-build-release-fleet-000 nv-build-release-manager-000 nvpublic
+
+          for IMAGE in "controller" "enforcer" "manager" "allinone"
+          do
+              docker tag neuvector/${IMAGE}:latest neuvector/${IMAGE}.private:amd64.$TAG
+              docker push neuvector/${IMAGE}.private:amd64.$TAG
+          done
+
+  build-publish-arm64:
+    runs-on: hosted-ubuntu-arm64-build-server
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Login to registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}
+      - run: |
+          cd ${{ github.workspace }}; cd .. # put us in parent folder, release/...
+
+          BRANCH_TAG=${{ github.event.inputs.tag }}
+          if [[ $BRANCH_TAG == v* ]]; then
+              TAG=${BRANCH_TAG#v}
+          else
+              echo "Tag must start with 'v'"
+              exit 1
+          fi
+
+          release/scripts/jenkins-ssh-script-fleet.sh default $BRANCH_TAG nv-build-release-fleet nv-build-release-fleet-000 000 nvpublic
+          release/scripts/jenkins-ssh-script-manager.sh default $BRANCH_TAG nv-build-release-manager nv-build-release-manager-000 000 nvpublic
+          release/scripts/jenkins-ssh-script-allinone.sh default $BRANCH_TAG nv-build-release-allinone nv-build-release-allinone-000 000 nv-build-release-fleet-000 nv-build-release-manager-000 nvpublic
+
+          for IMAGE in "controller" "enforcer" "manager" "allinone"
+          do
+              docker tag neuvector/${IMAGE}:latest neuvector/${IMAGE}.private:arm64.$TAG
+              docker push neuvector/${IMAGE}.private:arm64.$TAG
+          done
+
+  build-publish-multi-arch:
+    runs-on: hosted-ubuntu-arm64-build-server
+    needs: [build-publish-amd64, build-publish-arm64]
+    steps:
+      - name: Login to registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}
+      - run: |
+          BRANCH_TAG=${{ github.event.inputs.tag }}
+          if [[ $BRANCH_TAG == v* ]]; then
+              TAG=${BRANCH_TAG#v}
+          else
+              echo "Tag must start with 'v'"
+              exit 1
+          fi
+
+          for IMAGE in "controller" "enforcer" "manager" "allinone"
+          do
+              echo "Push amd64 $IMAGE:$TAG to local registry"
+              docker pull neuvector/${IMAGE}.private:amd64.$TAG
+              docker tag neuvector/${IMAGE}.private:amd64.$TAG 10.1.127.3:5000/neuvector/${IMAGE}:$TAG
+              docker push 10.1.127.3:5000/neuvector/${IMAGE}:$TAG
+          done
+
+          # Invoke the Jenkins job
+          echo "*** Invoke Jenkins nv-build-release-oss job ***"
+          RESP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://10.1.127.7:8081/job/nv-build-release-oss/buildWithParameters?NV_RELEASE_TAG=${BRANCH_TAG} --user build:${{ secrets.JENKINS_BUILD_TOKEN }})
+          if [[ $RESP_CODE != \20* ]]; then
+              echo "API call returns $RESP_CODE"
+              exit -1
+          fi

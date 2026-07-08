@@ -1,0 +1,81 @@
+name: ghcr - build vuldbgen
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "database version to build without the leading v"
+      flow:
+        description: "continue with the scanner build"
+        default: "False"
+  workflow_call:
+
+env:
+  CRANE_VERSION: v0.21.7
+  CRANE_CHECKSUM: 1a57bc98207fa1c0d04bf760699099e26f8383499bfd55b99c1b919a928a7230
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Clone vul-dbgen
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ github.repository_owner }}/vul-dbgen
+          path: vul-dbgen
+          token: ${{ secrets.PAT }}
+          ref: refactor/build-vuldb-CI
+
+      - name: Install crane
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Installing crane ${{ env.CRANE_VERSION }}..."
+
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${{ env.CRANE_VERSION }}/go-containerregistry_Linux_x86_64.tar.gz" -o crane.tar.gz
+
+          echo "Verifying checksum..."
+          echo "${{ env.CRANE_CHECKSUM }}  crane.tar.gz" | sha256sum -c
+
+          tar -xzf crane.tar.gz crane
+          sudo mv crane /usr/local/bin/crane
+          rm crane.tar.gz
+
+          crane version
+
+      - name: Log in to GHCR for crane
+        run: |
+          echo "${{ github.token }}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Pull vulsource feeds
+        env:
+          REPO: ghcr.io/${{ github.repository_owner }}/vul
+        run: |
+          bash scripts/pull-vulsource-feeds.sh
+
+      - name: Move feeds to vul-dbgen
+        run: |
+          mkdir -p vul-dbgen/vul-source
+          mv vul-source/* vul-dbgen/vul-source/
+
+      - name: Build vulndb
+        run: |
+          set -e
+          echo "build database version=${{ github.event.inputs.version }}"
+
+          echo -e "\n*** make database ***\n"
+          VULN_VER=${{ github.event.inputs.version }} NVD_KEY=${{ secrets.DBGEN_NVD_KEY }} make -C vul-dbgen/ db || { echo "Failed make db"; exit 1; }
+
+      - name: Log in to GHCR for Docker
+        run: |
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Publish vul feeds
+        env:
+          OCI_REPOSITORY: ghcr.io/${{ github.repository }}/vul
+        run: |
+          VULN_VER=${{ github.event.inputs.version }} bash scripts/publish-vuls.sh
