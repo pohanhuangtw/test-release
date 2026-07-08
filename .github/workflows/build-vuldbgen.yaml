@@ -10,6 +10,10 @@ on:
         default: "True"
   workflow_call:
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build:
     runs-on: hosted-ubuntu-arm64-build-server
