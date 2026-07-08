@@ -3,7 +3,7 @@ name: Run feed script and publish to GHCR
 description: |
   Runs a vulsource script that writes `output_file` or `output_path` to
   GITHUB_OUTPUT, then publishes the resulting file to GHCR as an OCI artifact
-  using ORAS.
+  using crane.
 
 inputs:
   script:
@@ -149,32 +149,32 @@ runs:
         mkdir -p "$(dirname "$checksum_file")" "$(dirname "$ref_file")"
         sha256sum "$OUTPUT_FILE" > "$checksum_file"
 
-        # Create a minimal OCI image with the vulnerability feed as a layer
+        # Package the feed files into a layer so they appear under /feed/ when exported.
         temp_dir=$(mktemp -d)
         trap 'rm -rf "$temp_dir"' EXIT
+        layer_dir="$temp_dir/layer"
+        layer_tar="$temp_dir/feed.tar.gz"
+        output_basename=$(basename "$OUTPUT_FILE")
+        checksum_basename=$(basename "$checksum_file")
 
-        cp "$OUTPUT_FILE" "$checksum_file" "$temp_dir/"
+        mkdir -p "$layer_dir/feed"
+        cp "$OUTPUT_FILE" "$layer_dir/feed/$output_basename"
+        cp "$checksum_file" "$layer_dir/feed/$checksum_basename"
+        tar -czf "$layer_tar" -C "$layer_dir" feed/
 
-        # Create Dockerfile that copies the feed files
-        printf '%s\n' \
-          'FROM scratch' \
-          'COPY . /feed/' \
-          'LABEL org.opencontainers.image.title="Vulnerability Feed"' \
-          'LABEL vul.artifact.type="application/vnd.neuvector.vuln.feed.v1"' \
-          > "$temp_dir/Dockerfile"
+        printf '%s' "$password" | crane auth login "$registry" -u "$username" --password-stdin
 
-        # Build and push using Docker
-        printf '%s' "$password" | docker login "$registry" -u "$username" --password-stdin
+        crane append \
+          --new_layer "$layer_tar" \
+          --new_tag "$reference" \
+          --oci-empty-base
 
-        docker buildx build \
-          --platform linux/amd64 \
-          --tag "$reference" \
-          --push \
-          --quiet \
-          "$temp_dir" > /dev/null
+        crane mutate "$reference" \
+          --label org.opencontainers.image.title="Vulnerability Feed" \
+          --label vul.artifact.type="$artifact_type" \
+          --tag "$reference" > /dev/null
 
-        # Get the digest of the pushed image
-        digest=$(docker buildx imagetools inspect "$reference" --format '{{json .}}' | jq -r '.manifest.digest')
+        digest=$(crane digest "$reference")
 
         full_reference="${reference}@${digest}"
         printf '%s\n' "$full_reference" > "$ref_file"

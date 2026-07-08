@@ -34,7 +34,7 @@ jobs:
         uses: ./.github/actions/install-crane
       - name: Log in to GHCR for crane
         run: |
-          echo "${{ steps.app-token.outputs.token }}" | crane auth login ghcr.io -u "x-access-token" --password-stdin
+          echo "${{ github.token }}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Build vulndb
         run: |
           set -e
