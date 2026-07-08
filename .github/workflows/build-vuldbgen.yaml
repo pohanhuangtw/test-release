@@ -23,6 +23,7 @@ jobs:
         with:
           client-id: ${{ secrets.GH_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
       - name: Clone vul-dbgen
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -114,6 +115,7 @@ jobs:
         with:
           client-id: ${{ secrets.GH_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
       - name: Clone scanner
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
