@@ -17,19 +17,19 @@ jobs:
       fail-fast: false
       matrix:
         script:
-          # - scripts/vulsource/amazon.sh
+          - scripts/vulsource/amazon.sh
           - scripts/vulsource/app-manual.sh
-          # - scripts/vulsource/golang.sh
-          # - scripts/vulsource/k8s.sh
-          # - scripts/vulsource/chainguard.sh
-          # - scripts/vulsource/debian.sh
-          # - scripts/vulsource/github.sh
-          # - scripts/vulsource/mariner-vulnerability.sh
-          # - scripts/vulsource/photon.sh
-          # - scripts/vulsource/redhat.sh
-          # - scripts/vulsource/suse.sh
-          # - scripts/vulsource/ubuntu-cve-tracker.sh
-          # - scripts/vulsource/nvd.sh
+          - scripts/vulsource/golang.sh
+          - scripts/vulsource/k8s.sh
+          - scripts/vulsource/chainguard.sh
+          - scripts/vulsource/debian.sh
+          - scripts/vulsource/github.sh
+          - scripts/vulsource/mariner-vulnerability.sh
+          - scripts/vulsource/photon.sh
+          - scripts/vulsource/redhat.sh
+          - scripts/vulsource/suse.sh
+          - scripts/vulsource/ubuntu-cve-tracker.sh
+          - scripts/vulsource/nvd.sh
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
