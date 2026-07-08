@@ -8,7 +8,7 @@
 set -uo pipefail
 source "$(dirname "$0")/_lib.sh"
 ghsaBatch=80
-ghsaToken="${GITHUB_TOKEN:-}"
+ghsaToken="${GHSA_TOKEN:-}"
 
 if [ -z "$ghsaToken" ]; then
     echo "GHSA_TOKEN, GH_TOKEN, or GITHUB_TOKEN is required for GitHub advisory downloads" >&2

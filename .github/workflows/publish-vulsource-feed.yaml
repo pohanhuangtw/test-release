@@ -49,7 +49,7 @@ jobs:
         name: Run feed and publish to GHCR
         uses: ./.github/actions/run-feed-to-ghcr
         env:
-          GHSA_TOKEN: ${{ github.token }}
+          GHSA_TOKEN: ${{ secrets.GHSA_TOKEN }}
           NVD_KEY: ${{ secrets.DBGEN_NVD_KEY }}
         with:
           script: ${{ matrix.script }}
