@@ -21,11 +21,17 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+      - name: Generate App Token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ github.repository_owner }}/scanner
           path: scanner
-          token: ${{ secrets.BECITSTHERE_PUBLISH_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           ref: ${{ github.event.inputs.rev }}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -37,12 +43,6 @@ jobs:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_NVBUILD_USERNAME }}
           password: ${{ secrets.DOCKERHUB_NVBUILD_PASSWORD }}
-      - name: Generate App Token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        id: app-token
-        with:
-          app-id: ${{ secrets.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
       - name: Install crane
         uses: ./.github/actions/install-crane
       - name: Log in to GHCR for crane
@@ -95,7 +95,7 @@ jobs:
             --build-arg VERSION=$VERSION \
             --build-arg COMMIT=$(git rev-parse --short HEAD) \
             --platform=$PLATFORMS \
-            -t pohanhuangtw/scanner.private:$TAG.v6 --push .
+            -t ${{ github.repository_owner }}/scanner.private:$TAG.v6 --push .
       - name: Build v5 scanner and publish to scanner.private
         env:
           TAG: ${{github.event.inputs.version }}
@@ -104,10 +104,10 @@ jobs:
           cd build/scanner/
           make buildx-machine
           docker buildx build -f package/Dockerfile --builder neuvector \
-            --build-arg SCANNER_IMAGE=pohanhuangtw/scanner.private:$TAG.v6 \
+            --build-arg SCANNER_IMAGE=${{ github.repository_owner }}/scanner.private:$TAG.v6 \
             --platform=$PLATFORMS \
-            -t pohanhuangtw/scanner.private:$TAG --push .
-          regctl image copy pohanhuangtw/scanner.private:$TAG pohanhuangtw/scanner.private:latest
+            -t ${{ github.repository_owner }}/scanner.private:$TAG --push .
+          regctl image copy ${{ github.repository_owner }}/scanner.private:$TAG ${{ github.repository_owner }}/scanner.private:latest
 
   publish:
     runs-on: hosted-ubuntu-arm64-build-server
@@ -141,9 +141,9 @@ jobs:
         run: |
           # Sync v5 only for now until we migrate automation to support v6.
           VER=$(echo ${{ github.event.inputs.version }} | tr -d .)
-          regctl --host reg=$LAB_REGISTRY,tls=insecure image copy pohanhuangtw/scanner.private:$TAG $LAB_REGISTRY/pohanhuangtw/scanner:jenkins-nv-build-updater-$VER
-          regctl --host reg=$LAB_REGISTRY,tls=insecure image copy pohanhuangtw/scanner.private:$TAG $LAB_REGISTRY/pohanhuangtw/scanner:jenkins-nv-build-scanner-$VER
-          regctl --host reg=$LAB_REGISTRY,tls=insecure image copy pohanhuangtw/scanner.private:$TAG $LAB_REGISTRY/pohanhuangtw/scanner:latest
+          regctl --host reg=$LAB_REGISTRY,tls=insecure image copy ${{ github.repository_owner }}/scanner.private:$TAG $LAB_REGISTRY/${{ github.repository_owner }}/scanner:jenkins-nv-build-updater-$VER
+          regctl --host reg=$LAB_REGISTRY,tls=insecure image copy ${{ github.repository_owner }}/scanner.private:$TAG $LAB_REGISTRY/${{ github.repository_owner }}/scanner:jenkins-nv-build-scanner-$VER
+          regctl --host reg=$LAB_REGISTRY,tls=insecure image copy ${{ github.repository_owner }}/scanner.private:$TAG $LAB_REGISTRY/${{ github.repository_owner }}/scanner:latest
 
           # Invoke the Jenkins job
           curl -X POST ${{ secrets.LAB_JENKINS }}/job/automation_check_scanner/build \
