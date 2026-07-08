@@ -1,4 +1,4 @@
-name: V2 build vulndb
+name: Build scanner - Build vuldb
 
 on:
   workflow_dispatch:
