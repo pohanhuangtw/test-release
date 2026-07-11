@@ -5,12 +5,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Scanner version to build'
+        description: "Scanner version to build"
       rev:
-        description: 'Scanner repo revision'
+        description: "Scanner repo revision"
       flow:
-        description: 'continue with the scanner publish'
-        default: 'False'
+        description: "continue with the scanner publish"
+        default: "False"
   workflow_call:
 
 # TODO: Migrate to vault
@@ -34,6 +34,14 @@ jobs:
           path: scanner
           token: ${{ steps.app-token.outputs.token }}
           ref: ${{ github.event.inputs.rev }}
+      - name: Trivy scan scanner go.mod
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: "fs"
+          scan-ref: "go.mod"
+          format: "table"
+          exit-code: "1"
+          scanners: "vuln"
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
         with:
