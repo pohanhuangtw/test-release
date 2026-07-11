@@ -35,10 +35,10 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           ref: ${{ github.event.inputs.rev }}
       - name: Trivy scan scanner go.mod
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: "fs"
-          scan-ref: "go.mod"
+          scan-ref: "scanner/go.mod"
           format: "table"
           exit-code: "1"
           scanners: "vuln"
