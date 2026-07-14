@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INPUT_PATH="${1:-${EXTRACT_CHAINGUARD_PATH:-}}"
-EXTRACT_DIR="${EXTRACT_CHAINGUARD_DIR:-}"
+INPUT_PATH="${1:-${VERIFY_TARGET_PATH:-${EXTRACT_CHAINGUARD_PATH:-}}}"
+EXTRACT_DIR="${VERIFY_EXTRACT_DIR:-${EXTRACT_CHAINGUARD_DIR:-}}"
 
 _extract_cves_from_json_stream() {
   jq -r '
@@ -42,5 +42,6 @@ if [ -n "$EXTRACT_DIR" ] && [ -d "$EXTRACT_DIR" ]; then
 fi
 
 echo "Usage: $0 <osv-v2.zip>" >&2
-echo "Or set EXTRACT_CHAINGUARD_PATH to a zip, or EXTRACT_CHAINGUARD_DIR to an extracted directory." >&2
+echo "Or set VERIFY_TARGET_PATH to a zip, VERIFY_EXTRACT_DIR to an extracted directory," >&2
+echo "or use the legacy EXTRACT_CHAINGUARD_PATH / EXTRACT_CHAINGUARD_DIR variables." >&2
 exit 1
