@@ -45,7 +45,7 @@ jobs:
           # Update $VERSION/cvedb.regular, $VERSION/VERSION, LATEST/cvedb.regular and LATEST/VERSION
           mkdir ${{ github.event.inputs.version }}
           cp vul-dbgen/cvedb.regular ${{ github.event.inputs.version }}/cvedb.regular
-          
+
            # Create VERSION file
           echo "${{ github.event.inputs.version }}" > ${{ github.event.inputs.version }}/VERSION
           SHA256SUM=$(sha256sum ${{ github.event.inputs.version }}/cvedb.regular | cut -d ' ' -f1)
@@ -75,7 +75,7 @@ jobs:
             "${{ github.event.inputs.version }}/cvedb.regular" \
             "${{ github.event.inputs.version }}/VERSION" \
             "${{ github.event.inputs.version }}"
-          
+
           ./scripts/ghcr-vulndb-artifact.sh publish \
             govulndb \
             "${{ github.event.inputs.version }}/govulndb.zip" \
@@ -106,11 +106,19 @@ jobs:
     needs: [build]
     if: github.event.inputs.flow == 'True'
     steps:
+      - name: Generate App Token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        id: app-token
+        with:
+          client-id: ${{ secrets.GH_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
       - name: Clone scanner
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: ${{ github.repository_owner }}/scanner
           path: scanner
+          token: ${{ steps.app-token.outputs.token }}
       - name: Download checksums
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -143,4 +151,4 @@ jobs:
       - name: Trigger downstream job
         run: |
           gh workflow run build-scanner.yaml -f version=${{ github.event.inputs.version }} -f flow=True
- 
+
