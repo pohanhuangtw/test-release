@@ -89,59 +89,47 @@ verify_digest() {
 pull_feed() {
   local feed=$1
   local ref="${REPO}/${feed}:${TAG}"
+  local ref_from_file
   local feed_dir="${feed%.ref}"
   local output_path="$OUTPUT_DIR/$feed_dir"
 
   echo "==> Pulling $feed -> $feed_dir"
 
-  # Verify digest
+  ref_from_file=$(get_ref_from_file "$feed")
   local expected_digest=$(get_expected_digest "$feed")
-  if ! verify_digest "$ref" "$expected_digest"; then
-    echo "    ⚠ Continuing despite verification failure..."
+
+  # Resolve ref: verify latest, fallback to pinned, or fail
+  if verify_digest "$ref" "$expected_digest"; then
+    : # use :latest ref as-is
+  elif [ -n "$ref_from_file" ]; then
+    echo "    → Digest mismatch or no ref file, using pinned: $ref_from_file"
+    ref="$ref_from_file"
+  else
+    echo "    ✗ Digest verification failed and no pinned ref available"
+    return 1
   fi
 
-  # Use crane to export the image filesystem
+  # Pull
   local temp_tar=$(mktemp)
   trap "rm -f '$temp_tar'" RETURN
 
-  # Try pulling with :latest tag first
   if ! crane export "$ref" "$temp_tar" 2>/dev/null; then
     echo "    ✗ Failed to export $ref"
-
-    # Fallback to digest from .ref file
-    local ref_from_file=$(get_ref_from_file "$feed")
-    if [ -n "$ref_from_file" ]; then
-      echo "    → Falling back to ref file: $ref_from_file"
-      ref="$ref_from_file"
-
-      if ! crane export "$ref" "$temp_tar" 2>/dev/null; then
-        echo "    ✗ Fallback also failed"
-        return 1
-      fi
-      echo "    ✓ Fallback succeeded"
-    else
-      echo "    ✗ No .ref file available for fallback"
-      return 1
-    fi
+    return 1
   fi
 
-  # Extract to output directory
+  # Extract
   mkdir -p "$output_path"
   tar -xf "$temp_tar" -C "$output_path" --strip-components=1 feed/ 2>/dev/null ||
     tar -xf "$temp_tar" -C "$output_path" 2>/dev/null
 
   rm -f "$temp_tar"
 
-  # Auto-extract any .tar.gz files in the feed directory
   extract_archives "$feed" "$output_path"
 
-  # Flatten nested subdirectories (do this AFTER extract_archives)
   case "$feed" in
-  k8s | golang | chainguard)
-    # Keep these as-is (already flat or need special structure)
-    ;;
+  k8s | golang | chainguard) ;;
   *)
-    # For other feeds, flatten if there's a duplicate subdirectory
     if [ -d "$output_path/$feed" ]; then
       echo "    Flattening $feed/$feed/ -> $feed/"
       mv "$output_path/$feed"/* "$output_path/" 2>/dev/null || true
@@ -150,11 +138,9 @@ pull_feed() {
     ;;
   esac
 
-  # Remove Dockerfile and .sha256 (metadata files)
   rm -f "$output_path/Dockerfile" "$output_path"/*.sha256
 
   ls -lh "$output_path" | grep -v '\.zip.*' | awk '{print " " $5 " " $9}'
-  # List extracted files
   list_files "$output_path"
 
   echo ""
